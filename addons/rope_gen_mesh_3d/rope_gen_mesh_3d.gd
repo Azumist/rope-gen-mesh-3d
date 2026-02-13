@@ -33,7 +33,7 @@ func _enter_tree() -> void:
 
 	# gameplay
 	if not Engine.is_editor_hint():
-		if not has_generated_mesh():
+		if rope_data != null and not has_generated_mesh():
 			_regen_meshes(rope_data)
 		return
 	
@@ -85,26 +85,60 @@ func _regen_meshes(data: RopeData) -> void:
 
 	if data.single_mesh:
 		# origin point of a signle mesh is located at segment_points[0]
-
-		#region Single mesh generation
 		var segment_points := PackedVector3Array()
 		var segment_normals := PackedVector3Array()
 		var segment_t_values := PackedFloat32Array()
+		var array_mesh: ArrayMesh
 
-		for i in range(points_size - 1):
-			var start_point := points[i]
-			var end_point := points[i + 1]
-			var dir := start_point.direction_to(end_point)
-			var dist := start_point.distance_to(end_point)
+		match data.mesh_type:
+			RopeData.MeshType.EXTRUDED_CYLINDER:
+				for i in range(points_size - 1):
+					var start_point := points[i]
+					var end_point := points[i + 1]
+					var dir := start_point.direction_to(end_point)
+					var dist := start_point.distance_to(end_point)
 
-			var rings := rope_data.ext_v_segments
-			for j in range(rings):
-				var t := float(j) / (rings - 1)
-				segment_points.push_back(start_point + dir * dist * t)
-				segment_t_values.push_back(t)
+					var rings := rope_data.ext_v_segments
+					for j in range(rings):
+						var t := float(j) / (rings - 1)
+						segment_points.push_back(start_point + dir * dist * t)
+						segment_t_values.push_back(t)
 
-		segment_normals = _calculate_tangents(segment_points)
-		var array_mesh := _extrude_along_points_path(global_basis, rope_data, segment_points, segment_normals, segment_t_values, points_size)
+				segment_normals = _calculate_tangents(segment_points)
+				array_mesh = _extrude_along_points_path(global_basis, rope_data, segment_points, segment_normals, segment_t_values, points_size)
+
+			RopeData.MeshType.MESH_SEGMENT_ARRAY:
+				var mesh_forward_axis := data.mse_forward_axis
+				var mesh_aabb := data.mse_mesh.get_aabb()
+				var mesh_axis_length := mesh_aabb.get_support(mesh_forward_axis).length()
+				var instance_spacing := mesh_axis_length * data.mse_instance_spacing
+				var instances_per_segment: PackedInt32Array = []
+				
+				for i in range(points_size - 1):
+					var start_point := points[i]
+					var end_point := points[i + 1]
+					var straight_dist := start_point.distance_to(end_point)
+					var base_dir := start_point.direction_to(end_point)
+					
+					var curve_length := _calculate_sagged_curve_arc_length(start_point, end_point, data.sag_offset, data.sag_keep_local_space)
+					var model_instances_count := int(curve_length / instance_spacing)
+					instances_per_segment.push_back(model_instances_count)
+					
+					for j in range(model_instances_count):
+						var target_distance := float(j) * instance_spacing
+						var t := _find_t_for_distance_along_curve(start_point, end_point, data.sag_offset, data.sag_keep_local_space, target_distance, straight_dist)
+						
+						var sag_factor := sin(t * PI)
+						var sag_offset := data.sag_offset * sag_factor if data.sag_keep_local_space else global_basis.inverse() * data.sag_offset * sag_factor
+						var point := start_point.lerp(end_point, t) + sag_offset
+						
+						var tangent := _calculate_curve_tangent(start_point, end_point, data.sag_offset, data.sag_keep_local_space, t, straight_dist)
+						
+						segment_points.push_back(point)
+						segment_normals.push_back(tangent)
+						segment_t_values.push_back(t)
+				
+				array_mesh = _repeat_mesh_along_points_path(global_basis, rope_data, data.mse_mesh, segment_points, segment_normals, segment_t_values, points_size, mesh_forward_axis, instances_per_segment)
 
 		_create_rs_instance(rope_data, array_mesh, global_transform)
 
@@ -112,40 +146,79 @@ func _regen_meshes(data: RopeData) -> void:
 			var shape := _generate_shape(array_mesh, data.col_shape_type)
 			_create_ps_instance(data, shape, global_transform)
 
-		#endregion
 	else:
 		# origin points of multiple meshes are located at segment_points respectively
-		#region Multiple meshes generation
-		for i in range(points_size - 1):
-			var segment_points := PackedVector3Array()
-			var segment_normals := PackedVector3Array()
-			var segment_t_values := PackedFloat32Array()
+		match data.mesh_type:
+			RopeData.MeshType.EXTRUDED_CYLINDER:
+				for i in range(points_size - 1):
+					var segment_points := PackedVector3Array()
+					var segment_normals := PackedVector3Array()
+					var segment_t_values := PackedFloat32Array()
 
-			var start_point := points[i]
-			var end_point := points[i + 1]
-			var dir := start_point.direction_to(end_point)
-			var dist := start_point.distance_to(end_point)
+					var start_point := points[i]
+					var end_point := points[i + 1]
+					var dir := start_point.direction_to(end_point)
+					var dist := start_point.distance_to(end_point)
 
-			var rings := rope_data.ext_v_segments
-			for j in range(rings):
-				var t := float(j) / (rings - 1) 
-				segment_points.push_back(start_point + dir * dist * t)
-				segment_t_values.push_back(t)
+					var rings := rope_data.ext_v_segments
 
-			segment_normals = _calculate_tangents(segment_points)
-			var array_mesh = _extrude_along_points_path(global_basis, rope_data, segment_points, segment_normals, segment_t_values, points_size, i)
+					for j in range(rings):
+						var t := float(j) / (rings - 1) 
+						segment_points.push_back(start_point + dir * dist * t)
+						segment_t_values.push_back(t)
 
-			_create_rs_instance(rope_data, array_mesh, global_transform)
+					segment_normals = _calculate_tangents(segment_points)
+					var array_mesh = _extrude_along_points_path(global_basis, rope_data, segment_points, segment_normals, segment_t_values, points_size, i)
 
-			if data.use_collisions:
-				var shape := _generate_shape(array_mesh, data.col_shape_type)
-				_create_ps_instance(data, shape, global_transform)
-		#endregion
+					_create_rs_instance(rope_data, array_mesh, global_transform)
+
+					if data.use_collisions:
+						var shape := _generate_shape(array_mesh, data.col_shape_type)
+						_create_ps_instance(data, shape, global_transform)
+
+			RopeData.MeshType.MESH_SEGMENT_ARRAY:
+				var mesh_forward_axis := data.mse_forward_axis
+				var mesh_aabb := data.mse_mesh.get_aabb()
+				var mesh_axis_length := mesh_aabb.get_support(mesh_forward_axis).length()
+				var instance_spacing := mesh_axis_length * data.mse_instance_spacing
+
+				for i in range(points_size - 1):
+					var segment_points := PackedVector3Array()
+					var segment_normals := PackedVector3Array()
+					var segment_t_values := PackedFloat32Array()
+
+					var start_point := points[i]
+					var end_point := points[i + 1]
+					var straight_dist := start_point.distance_to(end_point)
+					var base_dir := start_point.direction_to(end_point)
+
+					var curve_length := _calculate_sagged_curve_arc_length(start_point, end_point, data.sag_offset, data.sag_keep_local_space)
+					var model_instances_count := int(curve_length / instance_spacing)
+
+					for j in range(model_instances_count):
+						var target_distance := float(j) * instance_spacing
+						var t := _find_t_for_distance_along_curve(start_point, end_point, data.sag_offset, data.sag_keep_local_space, target_distance, straight_dist)
+
+						var sag_factor := sin(t * PI)
+						var sag_offset := data.sag_offset * sag_factor if data.sag_keep_local_space else global_basis.inverse() * data.sag_offset * sag_factor
+						var point := start_point.lerp(end_point, t) + sag_offset
+
+						var tangent := _calculate_curve_tangent(start_point, end_point, data.sag_offset, data.sag_keep_local_space, t, straight_dist)
+
+						segment_points.push_back(point)
+						segment_normals.push_back(tangent)
+						segment_t_values.push_back(t)
+					
+					var array_mesh = _repeat_mesh_along_points_path(global_basis, rope_data, data.mse_mesh, segment_points, segment_normals, segment_t_values, points_size, mesh_forward_axis, [], points_size - 1, i)
+
+					_create_rs_instance(rope_data, array_mesh, global_transform)
+
+					if data.use_collisions:
+						var shape := _generate_shape(array_mesh, data.col_shape_type)
+						_create_ps_instance(data, shape, global_transform)
 
 	generation_finished.emit()
 
-
-#region Mesh generation internals
 func _calculate_tangents(points: PackedVector3Array) -> PackedVector3Array:
 	assert(points.size() >= 2, "Cannot calculate tangent normals for points array of size less than 2")
 
@@ -155,13 +228,10 @@ func _calculate_tangents(points: PackedVector3Array) -> PackedVector3Array:
 	for i in range(count):
 		var tangent: Vector3
 		if i == 0:
-			#tangent = (points[1] - points[0]).normalized()
 			tangent = points[0].direction_to(points[1])
 		elif i == count - 1:
-			#tangent = (points[i] - points[i - 1]).normalized()
 			tangent = points[i - 1].direction_to(points[i])
 		else:
-			#tangent = (points[i + 1] - points[i - 1]).normalized()
 			tangent = points[i - 1].direction_to(points[i + 1])
 
 		tangents.push_back(tangent)
@@ -182,7 +252,8 @@ func _calculate_cumulative_distances(points: PackedVector3Array) -> PackedFloat3
 
 	return distances
 
-func _generate_lod_indices(ring_count: int, p_segments: int, ring_step: int, segment_step: int) -> PackedInt32Array:
+#region Cylinder extrusion internals
+func _generate_lod_indices_for_cylinder(ring_count: int, p_segments: int, ring_step: int, segment_step: int) -> PackedInt32Array:
 	var indices := PackedInt32Array()
 	var verts_per_ring := p_segments + 1
 
@@ -354,7 +425,7 @@ func _extrude_along_points_path(
 
 	#region ====== 3. ImporterMesh creation ======
 	var importer_mesh := ImporterMesh.new()
-	var indices_lod0 := _generate_lod_indices(ring_count, p_u_segments, 1, 1)
+	var indices_lod0 := _generate_lod_indices_for_cylinder(ring_count, p_u_segments, 1, 1)
 
 	var base_arrays = []
 	base_arrays.resize(Mesh.ARRAY_MAX)
@@ -364,9 +435,9 @@ func _extrude_along_points_path(
 	base_arrays[Mesh.ARRAY_COLOR] = colors_arr;
 	base_arrays[Mesh.ARRAY_INDEX] = indices_lod0
 
-	var indices_lod1 := _generate_lod_indices(ring_count, p_u_segments, 2, 2)
-	var indices_lod2 := _generate_lod_indices(ring_count, p_u_segments, 4, 4)
-	var indices_lod3 := _generate_lod_indices(ring_count, p_u_segments, 8, 8)
+	var indices_lod1 := _generate_lod_indices_for_cylinder(ring_count, p_u_segments, 2, 2)
+	var indices_lod2 := _generate_lod_indices_for_cylinder(ring_count, p_u_segments, 4, 4)
+	var indices_lod3 := _generate_lod_indices_for_cylinder(ring_count, p_u_segments, 8, 8)
 
 	var lods := {}
 	lods[p_lod1_dist] = indices_lod1
@@ -388,7 +459,234 @@ func _extrude_along_points_path(
 	var array_mesh := importer_mesh.get_mesh()
 
 	return array_mesh
+#endregion
 
+#region Mesh segment array internals
+func _calculate_sagged_curve_arc_length(start: Vector3, end: Vector3, sag_offset: Vector3, keep_local: bool, samples: int = 20) -> float:
+	var length := 0.0
+	var prev_point := start
+	
+	for i in range(1, samples + 1):
+		var t := float(i) / samples
+		var sag_factor := sin(t * PI)
+		var sag := sag_offset * sag_factor if keep_local else global_basis.inverse() * sag_offset * sag_factor
+		var point := start.lerp(end, t) + sag
+		
+		length += prev_point.distance_to(point)
+		prev_point = point
+	
+	return length
+
+func _find_t_for_distance_along_curve(start: Vector3, end: Vector3, sag_offset: Vector3, keep_local: bool, target_dist: float, straight_dist: float, samples: int = 20) -> float:
+	var accumulated := 0.0
+	var prev_point := start
+	
+	for i in range(1, samples + 1):
+		var t := float(i) / samples
+		var sag_factor := sin(t * PI)
+		var sag := sag_offset * sag_factor if keep_local else global_basis.inverse() * sag_offset * sag_factor
+		var point := start.lerp(end, t) + sag
+		
+		var segment_len := prev_point.distance_to(point)
+		
+		if accumulated + segment_len >= target_dist:
+			# interpolation between previous and current t
+			var remaining := target_dist - accumulated
+			var lerp_factor := remaining / segment_len if segment_len > 0.0 else 0.0
+			var prev_t := float(i - 1) / samples
+			return lerp(prev_t, t, lerp_factor)
+		
+		accumulated += segment_len
+		prev_point = point
+	
+	return 1.0
+
+func _calculate_curve_tangent(start: Vector3, end: Vector3, sag_offset: Vector3, keep_local: bool, t: float, straight_dist: float) -> Vector3: # aka curve derivative
+	var epsilon := 0.001
+	var t1 := clampf(t - epsilon, 0.0, 1.0)
+	var t2 := clampf(t + epsilon, 0.0, 1.0)
+	
+	var sag1 := sag_offset * sin(t1 * PI) if keep_local else global_basis.inverse() * sag_offset * sin(t1 * PI)
+	var sag2 := sag_offset * sin(t2 * PI) if keep_local else global_basis.inverse() * sag_offset * sin(t2 * PI)
+	
+	var point1 := start.lerp(end, t1) + sag1
+	var point2 := start.lerp(end, t2) + sag2
+	
+	return point1.direction_to(point2)
+
+func _generate_lod_indices_for_instances(model_count: int, sm_indices: PackedInt32Array, sm_vert_count: int, lod_step: int) -> PackedInt32Array:
+	var lod_indices := PackedInt32Array()
+	
+	var model_idx := 0
+	while model_idx < model_count:
+		var vertex_offset := model_idx * sm_vert_count
+		
+		for idx in sm_indices:
+			lod_indices.push_back(idx + vertex_offset)
+		
+		model_idx += lod_step
+	
+	return lod_indices
+
+func _repeat_mesh_along_points_path(
+	p_node_basis: Basis,
+	p_rope_data: RopeData,
+	p_source_mesh: ArrayMesh,
+	p_points: PackedVector3Array, 
+	p_normals: PackedVector3Array,
+	p_t_values: PackedFloat32Array,
+	p_hooks_count: int,
+	p_forward_axis: Vector3,
+	p_instances_per_segment: PackedInt32Array = [],
+	p_all_hooks_count: int = -1,
+	p_current_hook: int = -1
+) -> ArrayMesh:
+	#region ====== 0. Data gathering & assertions ======
+	assert(p_points.size() == p_normals.size(), "Points and normals array must have the same size")
+	assert(p_points.size() == p_t_values.size(), "Points and t_values array must have the same size")
+	assert(p_points.size() >= 2, "At least 2 points are needed")
+
+	var p_sag_offset := rope_data.sag_offset
+	var p_sag_keep_local := rope_data.sag_keep_local_space
+	var p_material := rope_data.material
+	var p_lod1_dist := rope_data.lod_level1_distance
+	var p_lod2_dist := rope_data.lod_level2_distance
+	var p_lod3_dist := rope_data.lod_level3_distance
+
+	var sm_arrays := p_source_mesh.surface_get_arrays(0)
+	var sm_vertices: PackedVector3Array = sm_arrays[Mesh.ARRAY_VERTEX]
+	var sm_normals: PackedVector3Array = sm_arrays[Mesh.ARRAY_NORMAL]
+	var sm_uvs: PackedVector2Array = sm_arrays[Mesh.ARRAY_TEX_UV]
+	var sm_indices: PackedInt32Array = sm_arrays[Mesh.ARRAY_INDEX]
+	var sm_vert_count := sm_vertices.size()
+	var sm_rot_rad := Vector3(
+		deg_to_rad(p_rope_data.mse_rotation_degrees.x),
+		deg_to_rad(p_rope_data.mse_rotation_degrees.y),
+		deg_to_rad(p_rope_data.mse_rotation_degrees.z)
+	)
+	#endregion
+
+	#region ====== 1. Model frames matrices construction ======
+	var frames: Array[Basis] = []
+	var forward := p_normals[0].normalized()
+	var up := Vector3.UP
+
+	if abs(forward.dot(up)) > 0.99:
+		up = Vector3.FORWARD
+
+	var right = forward.cross(up).normalized()
+	up = forward.cross(right).normalized()
+
+	frames.push_back(Basis(right, up, forward))
+
+	var model_count := p_points.size()
+	for i in range(1, model_count):
+		var prev_forward := p_normals[i - 1].normalized()
+		var curr_forward := p_normals[i].normalized()
+
+		var prev_right := frames[i - 1].x
+		var prev_up := frames[i - 1].y
+
+		var rot_axis := prev_forward.cross(curr_forward)
+
+		if rot_axis.length_squared() > 0.0001:
+			rot_axis = rot_axis.normalized()
+			var rot_angle := prev_forward.angle_to(curr_forward)
+			var rot := Basis(rot_axis, rot_angle)
+
+			var new_right := (rot * prev_right).normalized()
+			var new_up := (rot * prev_up).normalized()
+
+			frames.push_back(Basis(new_right, new_up, curr_forward))
+		else:
+			frames.push_back(Basis(prev_right, prev_up, curr_forward))
+	#endregion
+
+	#region ====== 2. Vertex data construction ======
+	var vertices_arr := PackedVector3Array()
+	var normals_arr := PackedVector3Array()
+	var uvs_arr := PackedVector2Array()
+	var indices_arr := PackedInt32Array()
+	var colors_arr := PackedColorArray()
+	var distances := _calculate_cumulative_distances(p_points)
+	var vertex_offset := 0
+
+	var current_hook_idx := 0
+	var models_in_segment := 0
+
+	for model_idx in range(model_count):
+		var center := p_points[model_idx]
+		var frame := frames[model_idx]
+		var anim_offset: float
+
+		if p_instances_per_segment.size() != 0: # single mesh
+			models_in_segment += 1
+			if models_in_segment > p_instances_per_segment[current_hook_idx]:
+				current_hook_idx += 1
+				models_in_segment = 0
+
+			anim_offset = float(current_hook_idx) / float(p_hooks_count)
+		else: # multiple meshes
+			anim_offset = float(p_current_hook) / float(p_all_hooks_count)
+
+		var t := p_t_values[model_idx]
+		var sag_factor := sin(t * PI)
+
+		var ring_xform := Transform3D(frame, center)\
+			.rotated_local(Vector3.UP, sm_rot_rad.y)\
+			.rotated_local(Vector3.RIGHT, sm_rot_rad.x)\
+			.rotated_local(Vector3.BACK, sm_rot_rad.z)
+
+		for vert_idx in range(sm_vert_count):
+			var xformed_vertex := ring_xform * sm_vertices[vert_idx]
+			var xformed_normal := (ring_xform.basis * sm_normals[vert_idx]).normalized()
+			var vertex_color := Color(sag_factor, anim_offset, 0.0, 0.0);
+
+			vertices_arr.push_back(xformed_vertex)
+			normals_arr.push_back(xformed_normal)
+			uvs_arr.push_back(sm_uvs[vert_idx])
+			colors_arr.push_back(vertex_color)
+
+		for idx in sm_indices:
+			indices_arr.push_back(idx + vertex_offset)
+
+		vertex_offset += sm_vert_count
+	#endregion
+
+	#region ====== 3. Create final mesh ======
+	var importer_mesh := ImporterMesh.new()
+	
+	var base_arrays = []
+	base_arrays.resize(Mesh.ARRAY_MAX)
+	base_arrays[Mesh.ARRAY_VERTEX] = vertices_arr
+	base_arrays[Mesh.ARRAY_NORMAL] = normals_arr
+	base_arrays[Mesh.ARRAY_TEX_UV] = uvs_arr
+	base_arrays[Mesh.ARRAY_COLOR] = colors_arr
+	base_arrays[Mesh.ARRAY_INDEX] = indices_arr # lod 0
+
+	var indices_lod1 := _generate_lod_indices_for_instances(model_count, sm_indices, sm_vert_count, 2)
+	var indices_lod2 := _generate_lod_indices_for_instances(model_count, sm_indices, sm_vert_count, 4)
+	var indices_lod3 := _generate_lod_indices_for_instances(model_count, sm_indices, sm_vert_count, 8)
+	
+	var lods := {}
+	lods[p_lod1_dist] = indices_lod1
+	lods[p_lod2_dist] = indices_lod2
+	lods[p_lod3_dist] = indices_lod3
+	
+	importer_mesh.add_surface(
+		Mesh.PRIMITIVE_TRIANGLES,
+		base_arrays,
+		[],
+		lods,
+		p_material,
+		"RopeSurface",
+		Mesh.ARRAY_FLAG_COMPRESS_ATTRIBUTES
+	)
+	#endregion
+	
+	var array_mesh := importer_mesh.get_mesh()
+
+	return array_mesh
 #endregion
 
 #region RenderingServer instance methods
