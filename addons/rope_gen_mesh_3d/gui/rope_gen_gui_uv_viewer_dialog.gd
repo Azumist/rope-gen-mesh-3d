@@ -24,6 +24,7 @@ var _translation_label: Label
 var _rot_origin_label: Label
 var _rot_angle_label: Label
 var _scale_label: Label
+var _warn_mse_label: Label
 
 var _file_select_btn: Button
 var _file_clear_btn: Button
@@ -59,6 +60,7 @@ func _create_settings_panel() -> void:
 	_debug_uv_controls_vbox.size_flags_stretch_ratio = 0.2
 	
 	_create_file_selection_line()
+	_create_mse_warn_line()
 	_create_translation_line()
 	_create_rotation_origin_line()
 	_create_rotation_angle_line()
@@ -83,87 +85,104 @@ func _create_file_selection_line() -> void:
 	_dialog.add_child(_file_dialog)
 	
 	_controls_box_line.push_back(HBoxContainer.new())
-	_controls_box_line[0].size_flags_horizontal = Control.SIZE_EXPAND_FILL
+	var line_idx := _controls_box_line.size() - 1
+
+	_controls_box_line[line_idx].size_flags_horizontal = Control.SIZE_EXPAND_FILL
 	
 	_bg_file_select_label = Label.new()
 	_bg_file_select_label.text = "Background image preview"
 	_bg_file_select_label.size_flags_horizontal = Control.SIZE_EXPAND_FILL
 	_bg_file_select_label.size_flags_vertical = Control.SIZE_SHRINK_BEGIN
-	_controls_box_line[0].add_child(_bg_file_select_label)
+	_controls_box_line[line_idx].add_child(_bg_file_select_label)
 	
 	_file_select_btn = Button.new()
 	_file_select_btn.text = "Select"
 	_file_select_btn.pressed.connect(func(): _file_dialog.popup_centered(Vector2i(900, 600)))
-	_controls_box_line[0].add_child(_file_select_btn)
+	_controls_box_line[line_idx].add_child(_file_select_btn)
 	
 	_file_clear_btn = Button.new()
 	_file_clear_btn.text = "Clear"
 	_file_clear_btn.pressed.connect(func(): _debug_uv_tex.texture = null)
-	_controls_box_line[0].add_child(_file_clear_btn)
+	_controls_box_line[line_idx].add_child(_file_clear_btn)
+
+func _create_mse_warn_line() -> void:
+	_controls_box_line.push_back(HBoxContainer.new())
+	var line_idx := _controls_box_line.size() - 1
+
+	_warn_mse_label = Label.new()
+	_warn_mse_label.text = "The following settings are only available when\n \"Mesh Type\" is set to \"Extruded Cylinder\""
+	_warn_mse_label.add_theme_color_override(&"font_color", Color.RED)
+	_warn_mse_label.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+	_warn_mse_label.size_flags_vertical = Control.SIZE_SHRINK_BEGIN
+	_controls_box_line[line_idx ].add_child(_warn_mse_label)
 
 func _create_translation_line() -> void:
 	_controls_box_line.push_back(HBoxContainer.new())
-	_controls_box_line[1].size_flags_horizontal = Control.SIZE_EXPAND_FILL
+	var line_idx := _controls_box_line.size() - 1
+	_controls_box_line[line_idx].size_flags_horizontal = Control.SIZE_EXPAND_FILL
 	
 	_translation_label = Label.new()
 	_translation_label.text = "UV Translation\n(in UV local space)"
 	_translation_label.size_flags_horizontal = Control.SIZE_EXPAND_FILL
 	_translation_label.size_flags_vertical = Control.SIZE_SHRINK_BEGIN
-	_controls_box_line[1].add_child(_translation_label)
+	_controls_box_line[line_idx].add_child(_translation_label)
 	
 	_translation_control = GUIControlFactory.create_vector2_control()
 	_translation_control.container.size_flags_horizontal = Control.SIZE_EXPAND_FILL
 	_translation_control.x_spinner.value_changed.connect(_on_changed_translation_x)
 	_translation_control.y_spinner.value_changed.connect(_on_changed_translation_y)
-	_controls_box_line[1].add_child(_translation_control.container)
+	_controls_box_line[line_idx].add_child(_translation_control.container)
 
 func _create_rotation_origin_line() -> void:
 	_controls_box_line.push_back(HBoxContainer.new())
-	_controls_box_line[2].size_flags_horizontal = Control.SIZE_EXPAND_FILL
+	var line_idx := _controls_box_line.size() - 1
+	_controls_box_line[line_idx].size_flags_horizontal = Control.SIZE_EXPAND_FILL
 	
 	_rot_origin_label = Label.new()
 	_rot_origin_label.text = "UV Rotation Origin\n(in global space)"
 	_rot_origin_label.size_flags_horizontal = Control.SIZE_EXPAND_FILL
 	_rot_origin_label.size_flags_vertical = Control.SIZE_SHRINK_BEGIN
-	_controls_box_line[2].add_child(_rot_origin_label)
+	_controls_box_line[line_idx].add_child(_rot_origin_label)
 	
 	_rot_origin_control = GUIControlFactory.create_vector2_control()
 	_rot_origin_control.container.size_flags_horizontal = Control.SIZE_EXPAND_FILL
 	_rot_origin_control.x_spinner.value_changed.connect(_on_changed_rot_origin_x)
 	_rot_origin_control.y_spinner.value_changed.connect(_on_changed_rot_origin_y)
-	_controls_box_line[2].add_child(_rot_origin_control.container)
+	_controls_box_line[line_idx].add_child(_rot_origin_control.container)
 
 func _create_rotation_angle_line() -> void:
 	_controls_box_line.push_back(HBoxContainer.new())
-	_controls_box_line[3].size_flags_horizontal = Control.SIZE_EXPAND_FILL
+	var line_idx := _controls_box_line.size() - 1
+	_controls_box_line[line_idx].size_flags_horizontal = Control.SIZE_EXPAND_FILL
 	
 	_rot_angle_label = Label.new()
 	_rot_angle_label.text = "UV Rotation Angle Degrees"
 	_rot_angle_label.autowrap_mode = TextServer.AUTOWRAP_WORD
 	_rot_angle_label.size_flags_horizontal = Control.SIZE_EXPAND_FILL
 	_rot_angle_label.size_flags_vertical = Control.SIZE_SHRINK_BEGIN
-	_controls_box_line[3].add_child(_rot_angle_label)
+	_controls_box_line[line_idx].add_child(_rot_angle_label)
 	
 	_rot_angle_control = GUIControlFactory.create_slider_control(-360.0, 360.0)
 	_rot_angle_control.size_flags_horizontal = Control.SIZE_EXPAND_FILL
 	_rot_angle_control.value_changed.connect(_on_changed_rot_angle_degrees)
-	_controls_box_line[3].add_child(_rot_angle_control)
+	_controls_box_line[line_idx].add_child(_rot_angle_control)
 
 func _create_scale_line() -> void:
 	_controls_box_line.push_back(HBoxContainer.new())
-	_controls_box_line[4].size_flags_horizontal = Control.SIZE_EXPAND_FILL
+	var line_idx := _controls_box_line.size() - 1
+	_controls_box_line[line_idx].size_flags_horizontal = Control.SIZE_EXPAND_FILL
 	
 	_scale_label = Label.new()
 	_scale_label.text = "UV Scale"
 	_scale_label.size_flags_horizontal = Control.SIZE_EXPAND_FILL
 	_scale_label.size_flags_vertical = Control.SIZE_SHRINK_BEGIN
-	_controls_box_line[4].add_child(_scale_label)
+	_controls_box_line[line_idx].add_child(_scale_label)
 	
 	_scale_control = GUIControlFactory.create_vector2_control()
 	_scale_control.container.size_flags_horizontal = Control.SIZE_EXPAND_FILL
 	_scale_control.x_spinner.value_changed.connect(_on_changed_scale_x)
 	_scale_control.y_spinner.value_changed.connect(_on_changed_scale_y)
-	_controls_box_line[4].add_child(_scale_control.container)
+	_controls_box_line[line_idx].add_child(_scale_control.container)
 
 func _create_uv_display() -> void:
 	_debug_uv_arc = AspectRatioContainer.new()
@@ -361,6 +380,19 @@ func show_for_mesh(mesh: RopeGenMesh3D) -> void:
 func get_dialog() -> AcceptDialog:
 	return _dialog
 
+func set_controls_active_state(enabled: bool) -> void:
+	var vec2_controls := [_translation_control, _rot_origin_control, _scale_control]
+	var slider_controls := [_rot_angle_control]
+
+	_warn_mse_label.visible = !enabled
+
+	for v in vec2_controls:
+		v.x_spinner.read_only = !enabled
+		v.y_spinner.read_only = !enabled
+
+	for s in slider_controls:
+		s.read_only = !enabled
+
 func cleanup() -> void:
 	_dialog_parent_hbox.queue_free()
 	_bg_file_select_label.queue_free()
@@ -370,6 +402,7 @@ func cleanup() -> void:
 	_rot_origin_label.queue_free()
 	_rot_angle_label.queue_free()
 	_scale_label.queue_free()
+	_warn_mse_label.queue_free()
 	
 	for key in _translation_control.keys():
 		_translation_control[key].queue_free()

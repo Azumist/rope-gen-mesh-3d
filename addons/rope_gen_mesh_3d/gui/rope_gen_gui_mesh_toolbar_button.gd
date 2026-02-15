@@ -94,6 +94,7 @@ func _on_menu_item_pressed(id: int) -> void:
 				_err_dialog.popup_centered()
 				return
 			
+			_uv_viewer.set_controls_active_state(_selected_rope_gen_mesh_3d.rope_data.mesh_type == RopeData.MeshType.EXTRUDED_CYLINDER)
 			_uv_viewer.show_for_mesh(_selected_rope_gen_mesh_3d)
 
 # builder methods
